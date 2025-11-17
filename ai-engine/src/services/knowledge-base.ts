@@ -2,7 +2,7 @@
  * Knowledge Base Service - Vector database for Substrate/FRAME documentation and patterns
  */
 
-import { PineconeClient } from 'pinecone-client';
+import { Pinecone } from '@pinecone-database/pinecone';
 import OpenAI from 'openai';
 import fs from 'fs/promises';
 import path from 'path';
@@ -17,7 +17,7 @@ import {
 } from '../types/knowledge-types';
 
 export class KnowledgeBase {
-  private pinecone: PineconeClient;
+  private pinecone: Pinecone;
   private openai: OpenAI;
   private logger: Logger;
   private indexName: string;
@@ -27,9 +27,8 @@ export class KnowledgeBase {
     this.logger = new Logger();
     this.indexName = process.env.PINECONE_INDEX_NAME || 'polyflow-knowledge';
 
-    this.pinecone = new PineconeClient({
-      apiKey: process.env.PINECONE_API_KEY || '',
-      environment: process.env.PINECONE_ENVIRONMENT || 'us-west1-gcp'
+    this.pinecone = new Pinecone({
+      apiKey: process.env.PINECONE_API_KEY || ''
     });
 
     this.openai = new OpenAI({
@@ -41,8 +40,7 @@ export class KnowledgeBase {
     try {
       this.logger.info('Initializing Knowledge Base...');
 
-      // Initialize Pinecone
-      await this.pinecone.init();
+      // Pinecone client is now ready to use (no init needed)
 
       // Create index if it doesn't exist
       await this.ensureIndexExists();
@@ -60,18 +58,22 @@ export class KnowledgeBase {
 
   private async ensureIndexExists(): Promise<void> {
     try {
-      const indexes = await this.pinecone.listIndexes();
+      const indexList = await this.pinecone.listIndexes();
+      const indexNames = indexList.indexes?.map(index => index.name) || [];
 
-      if (!indexes.includes(this.indexName)) {
+      if (!indexNames.includes(this.indexName)) {
         this.logger.info(`Creating Pinecone index: ${this.indexName}`);
 
         await this.pinecone.createIndex({
           name: this.indexName,
           dimension: 1536, // OpenAI text-embedding-ada-002 dimension
           metric: 'cosine',
-          pods: parseInt(process.env.PINECONE_PODS || '1', 10),
-          replicas: parseInt(process.env.PINECONE_REPLICAS || '1', 10),
-          podType: process.env.PINECONE_POD_TYPE || 'p1.x1'
+          spec: {
+            serverless: {
+              cloud: 'aws',
+              region: 'us-east-1'
+            }
+          }
         });
 
         this.logger.info('Pinecone index created successfully');
@@ -85,7 +87,7 @@ export class KnowledgeBase {
   }
 
   private async loadDocumentationIfNeeded(): Promise<void> {
-    const index = this.pinecone.Index(this.indexName);
+    const index = this.pinecone.index(this.indexName);
 
     // Check if documentation is already loaded
     const stats = await index.describeIndexStats();
@@ -671,7 +673,7 @@ Benchmarking Best Practices:
       // Generate embedding for the content
       const embedding = await this.generateEmbedding(entry.content);
 
-      const index = this.pinecone.Index(this.indexName);
+      const index = this.pinecone.index(this.indexName);
 
       // Upsert the entry
       await index.upsert([{
@@ -703,7 +705,7 @@ Benchmarking Best Practices:
       // Generate embedding for the query
       const queryEmbedding = await this.generateEmbedding(query);
 
-      const index = this.pinecone.Index(this.indexName);
+      const index = this.pinecone.index(this.indexName);
 
       // Build filter based on language and framework
       const filter: any = {};
